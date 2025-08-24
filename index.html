@@ -71,6 +71,19 @@
 
         <main class="space-y-12 md:space-y-20">
 
+            <section id="api-key-setup" class="bg-gray-900/50 backdrop-blur-sm rounded-2xl shadow-2xl p-6 md:p-8 border border-gray-700">
+                <h2 class="text-2xl md:text-3xl font-bold text-center mb-2 text-[#FCD34D]">Configuración de la API ⚙️</h2>
+                <p class="text-center text-gray-400 mb-6 max-w-2xl mx-auto">Para que las funciones de IA funcionen, necesitas una clave de API de Gemini. Guárdala aquí para usarla automáticamente.</p>
+                <div class="flex flex-col md:flex-row items-end space-y-4 md:space-y-0 md:space-x-4">
+                    <div class="w-full">
+                        <label for="apiKeyInput" class="block text-gray-400 mb-2 font-bold">Introduce tu clave de API de Gemini:</label>
+                        <input type="password" id="apiKeyInput" class="w-full bg-[#1F2937] text-white p-4 rounded-lg border border-gray-700 focus:outline-none focus:ring-2 focus:ring-[#FCD34D]" placeholder="Tu clave de API de Google AI Studio...">
+                    </div>
+                    <button id="saveApiKeyBtn" class="w-full md:w-auto flex-shrink-0 bg-yellow-500 text-gray-900 font-bold py-3 px-6 rounded-lg hover:bg-yellow-400 transition-colors duration-300">Guardar clave</button>
+                </div>
+                <p id="apiKeyStatus" class="mt-4 text-center font-bold"></p>
+            </section>
+
             <section id="prompt-generator" class="bg-gray-900/50 backdrop-blur-sm rounded-2xl shadow-2xl p-6 md:p-8 border border-gray-700">
                 <h2 class="text-2xl md:text-3xl font-bold text-center mb-2 text-[#00F0B5]">Generación Asistida por IA ✨</h2>
                 <p class="text-center text-gray-400 mb-8 max-w-2xl mx-auto">Convierte tus ideas simples en prompts detallados de Midjourney listos para usar, y genera metadatos para optimizar tus ventas en plataformas de stock.</p>
@@ -239,6 +252,7 @@
     </div>
 
     <script>
+        // --- Chart.js functionality ---
         const wrapLabel = (label, maxLength) => {
             if (typeof label !== 'string' || label.length <= maxLength) {
                 return label;
@@ -369,8 +383,12 @@
                 }
             }
         });
-        
+
         // --- Gemini API Integration ---
+        const apiKeyInput = document.getElementById('apiKeyInput');
+        const saveApiKeyBtn = document.getElementById('saveApiKeyBtn');
+        const apiKeyStatus = document.getElementById('apiKeyStatus');
+        
         const promptInput = document.getElementById('prompt-input');
         const generatePromptBtn = document.getElementById('generatePromptBtn');
         const generateMetadataBtn = document.getElementById('generateMetadataBtn');
@@ -379,11 +397,117 @@
         const metadataOutput = document.getElementById('metadata-output');
         const metadataPre = document.getElementById('metadata-pre');
         const loadingSpinner = document.getElementById('loading');
-        
-        const apiKey = "";
-        const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
 
+        let apiKey = localStorage.getItem('geminiApiKey');
         let generatedPrompt = '';
+
+        const checkApiKeyStatus = () => {
+            if (apiKey) {
+                apiKeyStatus.textContent = 'Clave API cargada con éxito.';
+                apiKeyStatus.className = 'mt-4 text-center font-bold text-green-400';
+            } else {
+                apiKeyStatus.textContent = 'No se ha encontrado una clave API. Por favor, introdúcela arriba.';
+                apiKeyStatus.className = 'mt-4 text-center font-bold text-red-400';
+            }
+        };
+
+        // Load API key from local storage on page load
+        window.addEventListener('load', () => {
+            checkApiKeyStatus();
+        });
+
+        // Save API key to local storage
+        saveApiKeyBtn.addEventListener('click', () => {
+            const key = apiKeyInput.value.trim();
+            if (key) {
+                localStorage.setItem('geminiApiKey', key);
+                apiKey = key;
+                checkApiKeyStatus();
+            }
+        });
+        
+        const callGeminiApi = async (prompt, isMetadata = false) => {
+            if (!apiKey) {
+                promptOutput.innerHTML = '<span class="text-red-400">Por favor, introduce tu clave de API arriba.</span>';
+                outputContainer.classList.remove('hidden');
+                metadataOutput.classList.add('hidden');
+                return;
+            }
+
+            loadingSpinner.classList.remove('hidden');
+            outputContainer.classList.remove('hidden');
+            if (!isMetadata) {
+                promptOutput.textContent = '';
+                metadataOutput.classList.add('hidden');
+            }
+
+            let retries = 0;
+            const maxRetries = 5;
+            let success = false;
+            
+            while (retries < maxRetries && !success) {
+                try {
+                    const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
+                    
+                    let payload;
+                    if (isMetadata) {
+                        payload = {
+                             contents: [{ role: "user", parts: [{ text: prompt }] }],
+                            generationConfig: {
+                                responseMimeType: "application/json",
+                                responseSchema: {
+                                    type: "OBJECT",
+                                    properties: {
+                                        "title": { "type": "STRING" },
+                                        "description": { "type": "STRING" }
+                                    }
+                                }
+                            }
+                        };
+                    } else {
+                        payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+                    }
+
+                    const response = await fetch(apiUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.candidates && result.candidates.length > 0 &&
+                        result.candidates[0].content && result.candidates[0].content.parts &&
+                        result.candidates[0].content.parts.length > 0) {
+                        if (isMetadata) {
+                            const json = result.candidates[0].content.parts[0].text;
+                            const parsedJson = JSON.parse(json);
+                            metadataPre.textContent = `Título: ${parsedJson.title}\n\nDescripción: ${parsedJson.description}`;
+                            metadataOutput.classList.remove('hidden');
+                        } else {
+                            generatedPrompt = result.candidates[0].content.parts[0].text;
+                            promptOutput.textContent = generatedPrompt;
+                        }
+                        success = true;
+                    } else {
+                        throw new Error("Respuesta de API inesperada.");
+                    }
+                } catch (error) {
+                    console.error('Error fetching data:', error);
+                    retries++;
+                    await new Promise(res => setTimeout(res, Math.pow(2, retries) * 100)); // Exponential backoff
+                }
+            }
+            
+            loadingSpinner.classList.add('hidden');
+            if (!success) {
+                promptOutput.textContent = 'Hubo un error al generar. Por favor, asegúrate de que tu clave es correcta o inténtalo de nuevo más tarde.';
+            }
+        };
 
         generatePromptBtn.addEventListener('click', async () => {
             const userIdea = promptInput.value.trim();
@@ -394,51 +518,8 @@
                 return;
             }
 
-            loadingSpinner.classList.remove('hidden');
-            outputContainer.classList.remove('hidden');
-            promptOutput.textContent = '';
-            metadataOutput.classList.add('hidden');
-            
-            let retries = 0;
-            const maxRetries = 5;
-            let success = false;
-            
-            while (retries < maxRetries && !success) {
-                try {
-                    const prompt = `Actúa como un fotógrafo experto en Midjourney. Tu tarea es convertir una idea simple en un prompt detallado y profesional para una imagen de stock. La idea es: "${userIdea}". Incluye detalles sobre el sujeto, la iluminación, la composición, la perspectiva, el estilo fotográfico, el ambiente, y los parámetros técnicos esenciales para Midjourney V7, como --ar, --raw y --q.`;
-                    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-                    
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const result = await response.json();
-                    
-                    if (result.candidates && result.candidates.length > 0 &&
-                        result.candidates[0].content && result.candidates[0].content.parts &&
-                        result.candidates[0].content.parts.length > 0) {
-                        generatedPrompt = result.candidates[0].content.parts[0].text;
-                        promptOutput.textContent = generatedPrompt;
-                        success = true;
-                    } else {
-                        throw new Error("Respuesta de API inesperada.");
-                    }
-                } catch (error) {
-                    console.error('Error fetching data:', error);
-                    retries++;
-                    await new Promise(res => setTimeout(res, Math.pow(2, retries) * 100)); // Exponential backoff
-                }
-            }
-            
-            loadingSpinner.classList.add('hidden');
-            if (!success) {
-                promptOutput.textContent = 'Hubo un error al generar el prompt. Por favor, inténtalo de nuevo más tarde.';
-            }
+            const prompt = `Actúa como un fotógrafo experto en Midjourney. Tu tarea es convertir una idea simple en un prompt detallado y profesional para una imagen de stock. La idea es: "${userIdea}". Incluye detalles sobre el sujeto, la iluminación, la composición, la perspectiva, el estilo fotográfico, el ambiente, y los parámetros técnicos esenciales para Midjourney V7, como --ar, --raw y --q.`;
+            await callGeminiApi(prompt);
         });
 
         generateMetadataBtn.addEventListener('click', async () => {
@@ -448,65 +529,8 @@
                 metadataOutput.classList.add('hidden');
                 return;
             }
-
-            loadingSpinner.classList.remove('hidden');
-            outputContainer.classList.remove('hidden');
-            metadataOutput.classList.add('hidden');
-
-            let retries = 0;
-            const maxRetries = 5;
-            let success = false;
-
-            while (retries < maxRetries && !success) {
-                try {
-                    const prompt = `Analiza el siguiente prompt de Midjourney y genera un título y una descripción adecuados para una foto de stock. Formatea la respuesta como JSON. El prompt es: "${generatedPrompt}"`;
-                    const payload = { 
-                        contents: [{ role: "user", parts: [{ text: prompt }] }],
-                        generationConfig: {
-                            responseMimeType: "application/json",
-                            responseSchema: {
-                                type: "OBJECT",
-                                properties: {
-                                    "title": { "type": "STRING" },
-                                    "description": { "type": "STRING" }
-                                }
-                            }
-                        }
-                    };
-                    const response = await fetch(apiUrl, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (!response.ok) {
-                        throw new Error(`HTTP error! status: ${response.status}`);
-                    }
-                    
-                    const result = await response.json();
-
-                    if (result.candidates && result.candidates.length > 0 &&
-                        result.candidates[0].content && result.candidates[0].content.parts &&
-                        result.candidates[0].content.parts.length > 0) {
-                        const json = result.candidates[0].content.parts[0].text;
-                        const parsedJson = JSON.parse(json);
-                        metadataPre.textContent = `Título: ${parsedJson.title}\n\nDescripción: ${parsedJson.description}`;
-                        metadataOutput.classList.remove('hidden');
-                        success = true;
-                    } else {
-                        throw new Error("Respuesta de API inesperada.");
-                    }
-                } catch (error) {
-                    console.error('Error fetching data:', error);
-                    retries++;
-                    await new Promise(res => setTimeout(res, Math.pow(2, retries) * 100)); // Exponential backoff
-                }
-            }
-            
-            loadingSpinner.classList.add('hidden');
-            if (!success) {
-                 promptOutput.textContent = 'Hubo un error al generar los metadatos. Por favor, inténtalo de nuevo más tarde.';
-            }
+            const prompt = `Analiza el siguiente prompt de Midjourney y genera un título y una descripción adecuados para una foto de stock. Formatea la respuesta como JSON. El prompt es: "${generatedPrompt}"`;
+            await callGeminiApi(prompt, true);
         });
     </script>
 
